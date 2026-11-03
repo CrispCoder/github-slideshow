@@ -224,6 +224,27 @@
     return formatLength(dimGeom(o).L, env && env.scale, o.precision ?? 2);
   }
 
+  /* ---------------- rotation (text, stamp, image) ---------------- */
+  const ROT = new Set(['text', 'stamp', 'image']);
+  RL.ROTATABLE = ROT;
+  function localBox(o) {
+    if (o.type === 'text') { const m = textMetrics(o); return { x: o.x, y: o.y, w: m.w, h: m.h }; }
+    if (o.type === 'stamp') { const m = stampMetrics(o); return { x: o.x, y: o.y, w: m.w, h: m.h }; }
+    return box(o);
+  }
+  function rotPt(px, py, cx, cy, a) {
+    const c = Math.cos(a), s = Math.sin(a), dx = px - cx, dy = py - cy;
+    return [cx + dx * c - dy * s, cy + dx * s + dy * c];
+  }
+  const rad = (o) => ((o.rotation || 0) * Math.PI) / 180;
+  /** Unrotated box + center + angle for rotatable objects, else null. */
+  RL.getFrame = function (o) {
+    if (!ROT.has(o.type)) return null;
+    const b = localBox(o);
+    return { x: b.x, y: b.y, w: b.w, h: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2, a: rad(o) };
+  };
+  RL.rotPt = rotPt;
+
   /* ---------------- drawing ---------------- */
   const drawers = {
     line(ctx, o) {
@@ -406,6 +427,33 @@
       }
       ctx.textAlign = 'start';
     },
+    image(ctx, o, env) {
+      const b = box(o);
+      const im = env && env.images && env.images.get(o.src);
+      if (o.shadow) {
+        ctx.save();
+        const blur = Math.max(6, Math.min(b.w, b.h) * 0.035);
+        ctx.shadowColor = 'rgba(0,0,0,0.38)';
+        ctx.shadowBlur = blur;
+        ctx.shadowOffsetX = ctx.shadowOffsetY = blur * 0.35;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.restore();
+      }
+      if (im && im.img) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(im.img, b.x, b.y, b.w, b.h);
+      } else {
+        ctx.fillStyle = '#eee'; ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = '#999'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(b.x, b.y); ctx.lineTo(b.x + b.w, b.y + b.h); ctx.moveTo(b.x + b.w, b.y); ctx.lineTo(b.x, b.y + b.h); ctx.stroke();
+      }
+      if (o.width > 0) {
+        ctx.strokeStyle = o.stroke; ctx.lineWidth = o.width; ctx.setLineDash([]); ctx.lineJoin = 'miter';
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+      }
+    },
     blur(ctx, o, env) {
       const b = box(o);
       if (b.w < 1 || b.h < 1) return;
@@ -448,6 +496,12 @@
     if (!fn) return;
     ctx.save();
     ctx.globalAlpha = o.opacity ?? 1;
+    if (o.rotation && ROT.has(o.type)) {
+      const f = RL.getFrame(o);
+      ctx.translate(f.cx, f.cy);
+      ctx.rotate(f.a);
+      ctx.translate(-f.cx, -f.cy);
+    }
     fn(ctx, o, env);
     ctx.restore();
   };
@@ -458,7 +512,13 @@
     return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
   }
   RL.getBounds = function (o) {
+    if (o.rotation && ROT.has(o.type)) {
+      const f = RL.getFrame(o);
+      const pts = [[f.x, f.y], [f.x + f.w, f.y], [f.x + f.w, f.y + f.h], [f.x, f.y + f.h]].map(([x, y]) => rotPt(x, y, f.cx, f.cy, f.a));
+      return bbox(pts.map((p) => p[0]), pts.map((p) => p[1]));
+    }
     switch (o.type) {
+      case 'image': return box(o);
       case 'line': return bbox([o.x1, o.x2], [o.y1, o.y2]);
       case 'dimension': {
         const g = dimGeom(o);
@@ -487,6 +547,11 @@
   /* ---------------- hit testing ---------------- */
   RL.hitTest = function (o, x, y, tol) {
     const w2 = (o.width || 0) / 2;
+    if (ROT.has(o.type)) {
+      const f = RL.getFrame(o);
+      const [lx, ly] = f.a ? rotPt(x, y, f.cx, f.cy, -f.a) : [x, y];
+      return inBox(lx, ly, f, tol + w2);
+    }
     switch (o.type) {
       case 'line': return distToSeg(x, y, o.x1, o.y1, o.x2, o.y2) <= tol + w2;
       case 'dimension': {
@@ -550,7 +615,17 @@
       { id: 's', x: x + w / 2, y: y + h }, { id: 'sw', x, y: y + h }, { id: 'w', x, y: y + h / 2 },
     ];
   }
-  RL.getHandles = function (o) {
+  /** @param hs world units per screen pixel (1/zoom) so the rotate handle keeps a fixed screen offset */
+  RL.getHandles = function (o, hs = 1) {
+    if (ROT.has(o.type)) {
+      const f = RL.getFrame(o);
+      const local = o.type === 'image' ? boxHandles(f) : [{ id: 'fs', x: f.x + f.w, y: f.y + f.h }];
+      local.push({ id: 'rot', x: f.cx, y: f.y - 26 * hs, kind: 'rot' });
+      return local.map((h) => {
+        const [x, y] = rotPt(h.x, h.y, f.cx, f.cy, f.a);
+        return Object.assign({}, h, { x, y });
+      });
+    }
     switch (o.type) {
       case 'line': return [{ id: 'p1', x: o.x1, y: o.y1 }, { id: 'p2', x: o.x2, y: o.y2 }];
       case 'dimension': {
@@ -572,9 +647,10 @@
     return [];
   };
   RL.handleCursor = function (id) {
-    return { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', fs: 'nwse-resize', r: 'ew-resize' }[id] || 'crosshair';
+    return { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', fs: 'nwse-resize', r: 'ew-resize', rot: 'grab' }[id] || 'crosshair';
   };
   RL.applyHandle = function (o, orig, id, x, y, shift) {
+    if (ROT.has(orig.type)) return applyRotatableHandle(o, orig, id, x, y, shift);
     switch (id) {
       case 'p1': { const p = shift ? snapAngle(orig.x2, orig.y2, x, y) : { x, y }; o.x1 = p.x; o.y1 = p.y; return; }
       case 'p2': { const p = shift ? snapAngle(orig.x1, orig.y1, x, y) : { x, y }; o.x2 = p.x; o.y2 = p.y; return; }
@@ -596,6 +672,50 @@
     if (id.includes('s')) y2 = y;
     o.x = x1; o.y = y1; o.w = x2 - x1; o.h = y2 - y1;
   };
+
+  function applyRotatableHandle(o, orig, id, x, y, shift) {
+    const f = RL.getFrame(orig);
+    if (id === 'rot') {
+      let deg = (Math.atan2(y - f.cy, x - f.cx) * 180) / Math.PI + 90;
+      if (shift) deg = Math.round(deg / 15) * 15;
+      deg = ((deg % 360) + 540) % 360 - 180; // (-180, 180]
+      o.rotation = Math.round(deg * 10) / 10;
+      return;
+    }
+    const [lx, ly] = rotPt(x, y, f.cx, f.cy, -f.a);
+    const placeKeepingCenter = (nb) => {
+      // nb is the new box in the old local frame; map its center back to the world
+      const [wx, wy] = rotPt(nb.x + nb.w / 2, nb.y + nb.h / 2, f.cx, f.cy, f.a);
+      o.x = wx - nb.w / 2; o.y = wy - nb.h / 2;
+      if ('w' in o) { o.w = nb.w; o.h = nb.h; }
+    };
+    if (id === 'fs') {
+      const ratio = Math.max(0.1, Math.max((lx - f.x) / f.w, (ly - f.y) / f.h));
+      o.fontSize = Math.max(4, Math.min(600, Math.round(orig.fontSize * ratio * 2) / 2));
+      const nb = localBox(Object.assign({}, o, { x: f.x, y: f.y }));
+      placeKeepingCenter({ x: f.x, y: f.y, w: nb.w, h: nb.h }); // top-left corner stays put
+      return;
+    }
+    // image box handles; corners keep the aspect ratio unless Shift is held
+    let x1 = f.x, y1 = f.y, x2 = f.x + f.w, y2 = f.y + f.h;
+    const corner = id.length === 2;
+    if (corner && !shift) {
+      const ax = id.includes('w') ? x2 : x1, ay = id.includes('n') ? y2 : y1;
+      const dx = lx - ax, dy = ly - ay;
+      const sx = id.includes('w') ? -dx : dx, sy = id.includes('n') ? -dy : dy;
+      const k = Math.max(4 / Math.min(f.w, f.h), Math.max(sx / f.w, sy / f.h));
+      const w = f.w * k, h = f.h * k;
+      x1 = id.includes('w') ? ax - w : ax; x2 = x1 + w;
+      y1 = id.includes('n') ? ay - h : ay; y2 = y1 + h;
+    } else {
+      if (id.includes('w')) x1 = lx;
+      if (id.includes('e')) x2 = lx;
+      if (id.includes('n')) y1 = ly;
+      if (id.includes('s')) y2 = ly;
+    }
+    const nb = { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.max(2, Math.abs(x2 - x1)), h: Math.max(2, Math.abs(y2 - y1)) };
+    placeKeepingCenter(nb);
+  }
 
   /** Keep a callout's box tall enough for its text. */
   RL.fitCallout = function (o) {

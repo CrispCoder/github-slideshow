@@ -56,6 +56,7 @@
     <button data-tool="balloon" title="Numbered balloon / revision delta (B) — drag for a leader"><svg viewBox="0 0 20 20"><circle cx="12" cy="8" r="5.5"/><path d="M8 12l-5 5M11 6.3l1.3-.8v5"/></svg></button>
     <button data-tool="dimension" title="Dimension / measure (D) — uses sheet calibration"><svg viewBox="0 0 20 20"><path d="M3 5v10M17 5v10M3.5 10h13M6 8l-2.5 2L6 12M14 8l2.5 2-2.5 2"/></svg></button>
     <button data-tool="stamp" title="Stamp (S) — APPROVED, REVISED…"><svg viewBox="0 0 20 20"><path d="M7.5 3h5v5l3.5 3H4l3.5-3zM3 13.5h14V17H3z"/></svg></button>
+    <button data-cmd="insertImage" title="Insert image onto this sheet (I) — or paste / drop one"><svg viewBox="0 0 20 20"><rect x="2.5" y="4" width="15" height="12" rx="1"/><circle cx="7" cy="8" r="1.4"/><path d="M3 14.5l4.5-4 3 2.5 2.5-2 4.5 3.5"/></svg></button>
     <button data-tool="blur" title="Blur / redact (U)"><svg viewBox="0 0 20 20"><path d="M3 3h4.6v4.6H3zM12.4 3H17v4.6h-4.6zM7.7 7.7h4.6v4.6H7.7zM3 12.4h4.6V17H3zM12.4 12.4H17V17h-4.6z"/></svg></button>
     <hr>
     <button data-tool="crop" title="Crop / extend canvas (X)"><svg viewBox="0 0 20 20"><path d="M6 2v12h12M2 6h12v12"/></svg></button>
@@ -106,14 +107,14 @@
       <h3 id="propTitle">Properties</h3>
       <p class="empty" id="propEmpty">Select an annotation, or pick a tool to set its default style.</p>
 
-      <div class="prop" data-types="line,rect,ellipse,cloud,pen,highlight,text,callout,balloon,dimension,stamp">
-        <label>Color</label><div class="swatches" data-swatch="stroke"></div>
+      <div class="prop" data-types="line,rect,ellipse,cloud,pen,highlight,text,callout,balloon,dimension,stamp,image">
+        <label id="colorLabel">Color</label><div class="swatches" data-swatch="stroke"></div>
       </div>
       <div class="prop" data-types="rect,ellipse,cloud,text,callout,balloon,stamp,blur">
         <label id="fillLabel">Fill</label><div class="swatches" data-swatch="fill" data-none="1"></div>
       </div>
-      <div class="prop inline" data-types="line,rect,ellipse,cloud,pen,highlight,callout,balloon,dimension,stamp">
-        <label>Line width</label><input type="number" data-k="width" min="0" max="200" step="0.5">
+      <div class="prop inline" data-types="line,rect,ellipse,cloud,pen,highlight,callout,balloon,dimension,stamp,image">
+        <label id="widthLabel">Line width</label><input type="number" data-k="width" min="0" max="200" step="0.5">
       </div>
       <div class="prop inline" data-types="text,callout,dimension,stamp">
         <label>Font size</label><input type="number" data-k="fontSize" min="4" max="600" step="1">
@@ -178,7 +179,16 @@
       <div class="prop inline" data-types="blur">
         <label>Block size</label><input type="number" data-k="block" min="3" max="200" step="1">
       </div>
-      <div class="prop" data-types="line,rect,ellipse,cloud,pen,highlight,text,callout,balloon,dimension,stamp,blur">
+      <div class="prop inline" data-types="text,stamp,image">
+        <label>Rotation (°)</label><input type="number" data-k="rotation" min="-180" max="180" step="1">
+      </div>
+      <div class="prop inline" data-types="image">
+        <label>Drop shadow</label><input type="checkbox" data-k="shadow">
+      </div>
+      <div class="prop" data-types="image" data-sel-only="1">
+        <button data-cmd="resetImageSize" class="wide" title="Restore the image's original pixel size">Reset to original size</button>
+      </div>
+      <div class="prop" data-types="line,rect,ellipse,cloud,pen,highlight,text,callout,balloon,dimension,stamp,blur,image">
         <label>Opacity <output id="opacityOut"></output></label><input type="range" data-k="opacity" min="0.1" max="1" step="0.05">
       </div>
     </div>
@@ -216,6 +226,7 @@
 </main>
 
 <input type="file" id="fileInput" multiple hidden accept=".redline,.json,image/*,application/pdf,.pdf">
+<input type="file" id="imageInput" multiple hidden accept="image/*">
 
 <dialog id="exportDlg">
   <form method="dialog">
@@ -283,6 +294,7 @@
           <tr><td><kbd>D</kbd></td><td>Dimension</td></tr>
           <tr><td><kbd>S</kbd></td><td>Stamp</td></tr>
           <tr><td><kbd>U</kbd></td><td>Blur / redact</td></tr>
+          <tr><td><kbd>I</kbd></td><td>Insert image onto sheet</td></tr>
           <tr><td><kbd>X</kbd></td><td>Crop / extend</td></tr>
           <tr><td><kbd>M</kbd></td><td>Calibrate scale</td></tr>
         </table>
@@ -299,6 +311,8 @@
           <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Send back / forward</td></tr>
           <tr><td>Double-click</td><td>Edit text / label</td></tr>
           <tr><td><kbd>Shift</kbd> while drawing</td><td>Snap angle / square</td></tr>
+          <tr><td>Round handle</td><td>Rotate text, stamps, images (Shift = 15°)</td></tr>
+          <tr><td>Image corners</td><td>Resize keeping aspect (Shift = free)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Finish text</td></tr>
         </table>
         <h4>File &amp; view</h4>
@@ -308,7 +322,9 @@
           <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export PNG / JPG / PDF</td></tr>
           <tr><td><kbd>Ctrl</kbd>+wheel</td><td>Zoom at cursor</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd> / <kbd>1</kbd></td><td>Fit / 100%</td></tr>
-          <tr><td>Paste image</td><td>Adds a new sheet</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd> image</td><td>Places it on the current sheet</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></td><td>Paste image as a new sheet</td></tr>
+          <tr><td>Drop on tray</td><td>Adds files as new sheets</td></tr>
         </table>
       </div>
     </div>

@@ -152,6 +152,7 @@ body { display: flex; flex-direction: column; }
 .sw-custom::-webkit-color-swatch-wrapper { padding: 2px; }
 .sw-custom::-webkit-color-swatch { border-radius: 3px; border: none; }
 
+button.wide { width: 100%; }
 .btnrow { display: flex; gap: 6px; margin-bottom: 8px; }
 .btnrow button { flex: 1; padding: 5px 4px; }
 .kv { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 9px; color: var(--muted); }

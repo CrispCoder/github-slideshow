@@ -33,11 +33,12 @@
     cloud: { stroke: RED, fill: 'none', width: 2.5, opacity: 1, arc: 22 },
     pen: { stroke: RED, width: 3, opacity: 1 },
     highlight: { stroke: '#ffeb3b', width: 22, opacity: 0.5 },
-    text: { stroke: RED, fill: 'none', fontSize: 22, bold: false, border: false, opacity: 1 },
+    text: { stroke: RED, fill: 'none', fontSize: 22, bold: false, border: false, opacity: 1, rotation: 0 },
     callout: { stroke: RED, fill: '#ffffff', width: 2, fontSize: 18, bold: false, opacity: 1, dash: 'solid', tipEnd: 'arrow' },
     balloon: { stroke: RED, fill: '#ffffff', width: 2, r: 16, shape: 'circle', opacity: 1, tipEnd: 'arrow' },
     dimension: { stroke: '#1565c0', fill: 'none', width: 1.5, fontSize: 16, opacity: 1, precision: 2 },
-    stamp: { stroke: '#c62828', fill: 'none', width: 3, fontSize: 34, opacity: 0.85, text: 'APPROVED', sub: '' },
+    stamp: { stroke: '#c62828', fill: 'none', width: 3, fontSize: 34, opacity: 0.85, text: 'APPROVED', sub: '', rotation: 0 },
+    image: { stroke: '#000000', width: 0, opacity: 1, shadow: false, rotation: 0 },
     blur: { mode: 'pixelate', block: 12, fill: '#000000', opacity: 1 },
   };
   const TOOL_NAMES = {
@@ -45,7 +46,7 @@
     pen: 'Pen', highlight: 'Highlighter', text: 'Text', callout: 'Callout', balloon: 'Balloon', dimension: 'Dimension',
     stamp: 'Stamp', blur: 'Blur / redact', crop: 'Crop / extend', calibrate: 'Calibrate',
   };
-  const TYPE_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud', pen: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout', balloon: 'Balloon', dimension: 'Dimension', stamp: 'Stamp', blur: 'Blur / redact' };
+  const TYPE_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud', pen: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout', balloon: 'Balloon', dimension: 'Dimension', stamp: 'Stamp', blur: 'Blur / redact', image: 'Image' };
   const TOOL_HINTS = {
     select: 'Click to select · Shift+click to add · drag empty space to box-select · double-click to edit text',
     pan: 'Drag to pan · Ctrl+wheel to zoom',
@@ -59,6 +60,7 @@
     calibrate: 'Draw a line over a feature of known length',
   };
   const TOOL_KEYS = { v: 'select', h: 'pan', a: 'arrow', l: 'line', r: 'rect', e: 'ellipse', k: 'cloud', p: 'pen', g: 'highlight', t: 'text', c: 'callout', b: 'balloon', d: 'dimension', s: 'stamp', u: 'blur', x: 'crop', m: 'calibrate' };
+  const NO_DEFAULT = new Set(['text', 'label', 'rotation']); // per-object only, never copied into tool defaults
   const SWATCHES = ['#e53935', '#fb8c00', '#fdd835', '#ffeb3b', '#43a047', '#1e88e5', '#1565c0', '#8e24aa', '#d81b60', '#000000', '#616161', '#ffffff'];
 
   /* =====================================================================
@@ -176,7 +178,7 @@
 
   function envFor(s, extra) {
     const bg = s.background ? images.get(s.background) : null;
-    return Object.assign({ bgImage: bg ? bg.img : null, bgX: s.bgX || 0, bgY: s.bgY || 0, bgColor: s.bgColor || '#ffffff', scale: s.scale }, extra);
+    return Object.assign({ bgImage: bg ? bg.img : null, bgX: s.bgX || 0, bgY: s.bgY || 0, bgColor: s.bgColor || '#ffffff', scale: s.scale, images }, extra);
   }
   function drawSheet(c, s, extra) {
     const env = envFor(s, extra);
@@ -228,15 +230,34 @@
     const sel = selected();
     ctx.lineWidth = px;
     for (const o of sel) {
-      const b = RL.getBounds(o);
       ctx.strokeStyle = '#1e88e5';
       ctx.setLineDash([4 * px, 3 * px]);
-      ctx.strokeRect(b.x - 4 * px, b.y - 4 * px, b.w + 8 * px, b.h + 8 * px);
+      const f = RL.getFrame(o);
+      if (f && f.a) {
+        ctx.save();
+        ctx.translate(f.cx, f.cy); ctx.rotate(f.a); ctx.translate(-f.cx, -f.cy);
+        ctx.strokeRect(f.x - 4 * px, f.y - 4 * px, f.w + 8 * px, f.h + 8 * px);
+        ctx.restore();
+      } else {
+        const b = RL.getBounds(o);
+        ctx.strokeRect(b.x - 4 * px, b.y - 4 * px, b.w + 8 * px, b.h + 8 * px);
+      }
     }
     ctx.setLineDash([]);
     if (sel.length === 1 && !(drag && drag.mode === 'move')) {
-      for (const h of RL.getHandles(sel[0])) {
+      const f = RL.getFrame(sel[0]);
+      for (const h of RL.getHandles(sel[0], px)) {
         const r = 4.5 * px;
+        if (h.kind === 'rot' && f) {
+          const [tx, ty] = RL.rotPt(f.cx, f.y, f.cx, f.cy, f.a);
+          ctx.strokeStyle = '#1e88e5'; ctx.lineWidth = px;
+          ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(h.x, h.y); ctx.stroke();
+          ctx.fillStyle = '#1e88e5';
+          ctx.beginPath(); ctx.arc(h.x, h.y, r * 1.3, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2 * px;
+          ctx.beginPath(); ctx.arc(h.x, h.y, r * 0.6, -Math.PI * 0.9, Math.PI * 0.4); ctx.stroke();
+          continue;
+        }
         ctx.fillStyle = '#fff';
         ctx.strokeStyle = '#1e88e5';
         ctx.lineWidth = 1.5 * px;
@@ -405,7 +426,7 @@
     const sel = selected();
     if (sel.length !== 1) return null;
     const r = 8 / state.view.zoom;
-    for (const h of RL.getHandles(sel[0])) if (Math.abs(h.x - p.x) <= r && Math.abs(h.y - p.y) <= r) return { obj: sel[0], id: h.id };
+    for (const h of RL.getHandles(sel[0], 1 / state.view.zoom)) if (Math.abs(h.x - p.x) <= r && Math.abs(h.y - p.y) <= r) return { obj: sel[0], id: h.id };
     return null;
   }
 
@@ -417,6 +438,13 @@
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onUp);
   canvas.addEventListener('dblclick', onDblClick);
+  // Keep the browser from moving focus on canvas clicks, so a text editor opened
+  // by this click keeps the keystrokes typed right after it.
+  canvas.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const a = document.activeElement;
+    if (a && a !== document.body && !a.classList.contains('text-editor') && a.blur) a.blur();
+  });
   canvas.addEventListener('pointerleave', () => { hover = null; render(); });
 
   function onDown(e) {
@@ -739,6 +767,15 @@
     const { obj: o, ta } = editing;
     const z = state.view.zoom;
     ta.style.color = o.stroke;
+    ta.style.transform = '';
+    if (o.rotation && o.type === 'text') {
+      // rotate the editor around the object's center so typing happens in place
+      const f = RL.getFrame(o);
+      const m = RL.textMetrics(o);
+      const c = toScreen(f.cx, f.cy), tl = toScreen(o.x + m.pad, o.y + m.pad);
+      ta.style.transformOrigin = `${c.x - tl.x}px ${c.y - tl.y}px`;
+      ta.style.transform = `rotate(${o.rotation}deg)`;
+    }
     if (o.type === 'text') {
       const m = RL.textMetrics(o);
       const p = toScreen(o.x + m.pad, o.y + m.pad);
@@ -808,10 +845,6 @@
     s.objects.push(...copies);
     state.sel = new Set(copies.map((c) => c.id));
     if (offset) { commit(); refresh(); }
-  }
-  function copySelection() {
-    const sel = selected();
-    if (sel.length) { clipboard = clone(sel); toast(`Copied ${sel.length} annotation${sel.length > 1 ? 's' : ''}`); }
   }
   function pasteClipboard() {
     const s = sheet();
@@ -994,6 +1027,9 @@
     if (isSel) title = sel.length === 1 ? TYPE_NAMES[sel[0].type] : `${sel.length} annotations`;
     else if (types.size) title = `${TOOL_NAMES[state.tool]} — defaults`;
     $('#propTitle').textContent = title;
+    const onlyImg = types.size === 1 && types.has('image');
+    $('#colorLabel').textContent = onlyImg ? 'Border color' : 'Color';
+    $('#widthLabel').textContent = onlyImg ? 'Border width' : 'Line width';
     $('#fillLabel').textContent = types.has('blur') && types.size === 1 ? 'Redact color' : types.has('dimension') ? 'Label background' : 'Fill';
     for (const prop of $$('#propSection .prop')) {
       const pts = prop.dataset.types.split(',');
@@ -1047,7 +1083,7 @@
         if (o.type === 'callout') RL.fitCallout(o);
         // remember as the default for this kind of annotation
         const tool = typeToTool(o);
-        if (toolStyles[tool] && key in toolStyles[tool] && key !== 'text' && key !== 'label') {
+        if (toolStyles[tool] && key in toolStyles[tool] && !NO_DEFAULT.has(key)) {
           toolStyles[tool][key] = SCALED.includes(key) && typeof value === 'number' ? value / k : value;
         }
       }
@@ -1272,6 +1308,44 @@
     }
     addSheet(newSheet(Object.assign({ name: baseName(name), width: w, height: h, background: id }, extra)));
   }
+  /** Place an image on the current sheet as a movable, resizable, rotatable object. */
+  async function placeImageObject(src, at) {
+    const s = sheet();
+    if (!s) return importImageSrc(src, 'Image');
+    const { id, img } = await registerImage(src);
+    const r = stage.getBoundingClientRect();
+    const z = state.view.zoom;
+    // fit within 60% of the visible area (and of the sheet), never upscale
+    const visW = r.width / z, visH = r.height / z;
+    const k = Math.min(1, (visW * 0.6) / img.naturalWidth, (visH * 0.6) / img.naturalHeight, (s.width * 0.9) / img.naturalWidth, (s.height * 0.9) / img.naturalHeight);
+    const w = Math.max(4, Math.round(img.naturalWidth * k)), h = Math.max(4, Math.round(img.naturalHeight * k));
+    let c = at || { x: (r.width / 2 - state.view.x) / z, y: (r.height / 2 - state.view.y) / z };
+    c = { x: clamp(c.x, w / 2, Math.max(w / 2, s.width - w / 2)), y: clamp(c.y, h / 2, Math.max(h / 2, s.height - h / 2)) };
+    const st = styleFor('image');
+    const o = Object.assign({ id: RL.uid(), type: 'image', src: id, x: Math.round(c.x - w / 2), y: Math.round(c.y - h / 2), w, h, natW: img.naturalWidth, natH: img.naturalHeight }, st);
+    addObject(o);
+    commit();
+    setToolKeepSel('select');
+    return o;
+  }
+  async function insertImageFiles(files, at) {
+    let n = 0;
+    for (const f of files) {
+      try { await placeImageObject(await readAsDataURL(f), at); n++; } catch (err) { toast(`Could not insert ${f.name}: ${err.message}`, true); }
+      if (at) at = { x: at.x + 30, y: at.y + 30 };
+    }
+    if (n) toast(`Inserted ${n} image${n > 1 ? 's' : ''} — drag corners to resize, the round handle to rotate`);
+  }
+  function resetImageSize() {
+    for (const o of selected()) {
+      if (o.type !== 'image' || !o.natW) continue;
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+      o.w = o.natW; o.h = o.natH; o.x = cx - o.w / 2; o.y = cy - o.h / 2;
+    }
+    commit();
+    refresh();
+  }
+
   async function importImageFile(file) {
     await importImageSrc(await readAsDataURL(file), file.name);
   }
@@ -1359,6 +1433,7 @@
    * ===================================================================== */
   function serialize() {
     const used = new Set(state.doc.sheets.map((s) => s.background).filter(Boolean));
+    for (const s of state.doc.sheets) for (const o of s.objects) if (o.type === 'image' && o.src) used.add(o.src);
     const imgs = {};
     used.forEach((id) => { const im = images.get(id); if (im) imgs[id] = im.src; });
     const out = {
@@ -1456,6 +1531,10 @@
     }
     $('#fileInput').click();
   }
+  $('#imageInput').addEventListener('change', async (e) => {
+    await insertImageFiles(Array.from(e.target.files || []));
+    e.target.value = '';
+  });
   $('#fileInput').addEventListener('change', async (e) => {
     await handleFiles(e.target.files);
     e.target.value = '';
@@ -1640,6 +1719,8 @@
     new: newDocument,
     open: openDialog,
     insert: () => $('#fileInput').click(),
+    insertImage: () => { if (!sheet()) { $('#fileInput').click(); return; } $('#imageInput').click(); },
+    resetImageSize,
     save: () => save(false),
     saveAs: () => save(true),
     undo, redo,
@@ -1696,8 +1777,9 @@
       };
       if (!inField) Object.assign(map, {
         d: () => duplicateSelection(), a: () => { state.sel = new Set(objs().map((o) => o.id)); setToolKeepSel('select'); },
-        c: () => (e.shiftKey ? copyImage() : copySelection()), x: () => { copySelection(); deleteSelection(); },
       });
+      if (!inField && k === 'c' && e.shiftKey) map.c = copyImage;
+      if (k === 'v') pasteAsSheet = e.shiftKey; // the paste event follows
       if (map[k]) { e.preventDefault(); map[k](); }
       return;
     }
@@ -1729,6 +1811,7 @@
     if (e.key === '[') { reorder(e.shiftKey ? 'toBack' : 'backward'); return; }
     if (e.key === '}') { reorder('toFront'); return; }
     if (e.key === '{') { reorder('toBack'); return; }
+    if (k === 'i' && !e.altKey) { commands.insertImage(); return; }
     if (TOOL_KEYS[k] && !e.altKey) { setTool(TOOL_KEYS[k]); }
   });
   window.addEventListener('keyup', (e) => {
@@ -1741,18 +1824,54 @@
     refresh();
   }
 
-  /* Clipboard paste: images become new sheets; otherwise paste annotations */
+  /* Clipboard. Annotations travel through the system clipboard (custom MIME
+   * type + JSON text), so copying markup always wins over an older screenshot
+   * sitting on the clipboard. Pasted images land ON the current sheet as image
+   * objects; Ctrl+Shift+V (or no open sheet) makes a new sheet instead. */
+  const CLIP_MIME = 'application/x-redline-objects';
+  let pasteAsSheet = false;
+  const notInField = (e) => !(e.target.closest && e.target.closest('input, textarea, select'));
+  function writeClip(e) {
+    const sel = selected();
+    if (!sel.length || !notInField(e) || $('dialog[open]')) return false;
+    clipboard = clone(sel);
+    const json = JSON.stringify({ format: 'redline-objects', objects: sel });
+    e.clipboardData.setData(CLIP_MIME, json);
+    e.clipboardData.setData('text/plain', json);
+    e.preventDefault();
+    return true;
+  }
+  document.addEventListener('copy', (e) => { if (writeClip(e)) toast(`Copied ${clipboard.length} annotation${clipboard.length > 1 ? 's' : ''}`); });
+  document.addEventListener('cut', (e) => { if (writeClip(e)) deleteSelection(); });
   document.addEventListener('paste', async (e) => {
-    if (e.target.closest && e.target.closest('input, textarea')) return;
-    const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+    if (!notInField(e) || $('dialog[open]')) return;
+    const asSheet = pasteAsSheet;
+    pasteAsSheet = false;
+    const dt = e.clipboardData;
+    let text = dt && (dt.getData(CLIP_MIME) || dt.getData('text/plain'));
+    if (text && text.includes('"redline-objects"')) {
+      try {
+        const d = JSON.parse(text);
+        if (d && d.format === 'redline-objects' && Array.isArray(d.objects)) {
+          e.preventDefault();
+          // image objects need their pixels, which only exist in this session
+          clipboard = d.objects.filter((o) => o.type !== 'image' || images.has(o.src));
+          pasteClipboard();
+          return;
+        }
+      } catch (_) { /* not ours */ }
+    }
+    const items = Array.from((dt && dt.items) || []);
     const imgItem = items.find((i) => i.type.startsWith('image/'));
     if (imgItem) {
       e.preventDefault();
       const file = imgItem.getAsFile();
-      if (file) {
-        try { await importImageSrc(await readAsDataURL(file), 'Pasted ' + new Date().toLocaleTimeString()); toast('Pasted image added as a new sheet'); }
-        catch (err) { toast(err.message, true); }
-      }
+      if (!file) return;
+      try {
+        const src = await readAsDataURL(file);
+        if (asSheet || !sheet()) { await importImageSrc(src, 'Pasted ' + new Date().toLocaleTimeString()); toast('Pasted image added as a new sheet'); }
+        else { await placeImageObject(src); toast('Image pasted onto the sheet — Ctrl+Shift+V pastes as a new sheet instead'); }
+      } catch (err) { toast(err.message, true); }
       return;
     }
     if (clipboard) { e.preventDefault(); pasteClipboard(); }
@@ -1767,7 +1886,13 @@
     e.preventDefault();
     dragDepth = 0;
     $('#dropzone').classList.remove('on');
-    if (e.dataTransfer && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+    if (!(e.dataTransfer && e.dataTransfer.files.length)) return;
+    const files = Array.from(e.dataTransfer.files);
+    const isImg = (f) => f.type.startsWith('image/') && !/\.redline$/i.test(f.name);
+    const onStage = stage.contains(e.target);
+    if (sheet() && onStage && files.every(isImg)) {
+      insertImageFiles(files, toDoc(e.clientX, e.clientY));
+    } else handleFiles(files);
   });
   const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
 

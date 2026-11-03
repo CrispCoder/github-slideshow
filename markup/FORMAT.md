@@ -28,7 +28,7 @@ Why JSON:
   "created": "2026-11-03T15:00:00.000Z",
   "modified": "2026-11-03T15:42:10.000Z",
   "sheets": [ /* Sheet, … in page order */ ],
-  "images": { "img_ab12cd": "data:image/png;base64,…" }
+  "images": { "img_ab12cd": "data:image/png;base64,…" }   // sheet backgrounds and image annotations
 }
 ```
 
@@ -66,6 +66,16 @@ pixels, origin top-left. Colors are CSS colors; `"none"` means no fill. Line
 | `dimension` | `x1 y1 x2 y2` (measured points), `offset` (perpendicular offset of the dimension line) | `stroke fill width fontSize precision text` (empty means it's measured live from the sheet `scale`) |
 | `stamp`     | `x y` (top-left) | `text sub` (second line, e.g. date) `stroke fill width fontSize` |
 | `blur`      | `x y w h` | `mode` (`pixelate`\|`redact`) `block fill` |
+| `image`     | `x y w h` (unrotated box) | `src` (key into top-level `images`) `natW natH` (original pixel size) `stroke width` (border; 0 = none) `shadow` |
+
+**Rotation.** `text`, `stamp` and `image` may carry `rotation` in degrees
+(clockwise, −180…180). It turns the object about the center of its unrotated
+box; the stored geometry is always the unrotated box.
+
+**Nested images.** An `image` annotation places a picture (a photo or detail
+view, for example) on top of a sheet. Its pixels live in the shared `images`
+table, exactly like sheet backgrounds, so several objects or sheets can reuse
+one image without storing it twice.
 
 Readers should ignore unknown fields and skip unknown `type`s so that files
 from newer versions still open. Writers should keep the `version` number and
